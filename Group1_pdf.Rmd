@@ -1,0 +1,521 @@
+---
+title: "Group1_Obesity_Visualization"
+author: "Aayush Dhakal, Rishabh Shrestha, Samrajya Thapa"
+date: "11/15/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load_libraries, echo=FALSE, message=FALSE, warning= FALSE}
+library(tidyverse)
+library(maps)
+library(usmap)
+library(stringr)
+library(lubridate)
+library(cowplot)
+library(rvest)
+library(gridExtra)
+library(leaflet)
+
+```
+
+# General Data Wrangling
+
+```{r data_wrangle, warnings = FALSE, message=FALSE, echo = FALSE}
+
+# This code block read the Obesity Dataset and then wrangles the dataframe so it is easier to view and use 
+# This portion of wrangling is just the general that might be useful to answer multiple questions
+# Further wrangling is required depending on the nature of the particular question
+
+
+df <- read_csv('data/obesity.csv')
+
+df_wrangle <- df %>% select(YearStart, LocationAbbr, Class, Question, Data_Value, Sample_Size, GeoLocation, StratificationCategory1, Stratification1) %>% 
+  rename(year = YearStart, abbr = LocationAbbr) %>% separate(GeoLocation, c('Lat', 'Long'), sep = ',')
+
+df_wrangle$Lat <- df_wrangle$Lat %>% str_remove("\\(") %>% as.numeric(.) 
+df_wrangle$Long <- df_wrangle$Long %>% str_remove("\\)") %>% as.numeric(.)
+
+map <- usmap::us_map("states")
+
+us_states <-  unique(map$abbr)
+states_and_territories <- unique(df_wrangle$abbr) 
+
+extra_states <- setdiff(states_and_territories, us_states)
+
+df_wrangle <- df_wrangle %>% filter(!(abbr %in% extra_states))
+
+```
+
+# Obesity in US States
+
+``` {r obesity_us_states, warnings = FALSE, message=FALSE, echo = FALSE}
+
+# This chunk wrangles the obesity rates in each US state in year 2016
+# This chunk plots the US map showing states with low and high obesity rates
+
+# Q1) How is obesity spread across different states in the US?
+
+start_value2 <- 'Total'
+
+df_total <- df_wrangle %>% filter(year == 2016, StratificationCategory1 == start_value2, 
+                                  Question == 'Percent of adults aged 18 years and older who have obesity') 
+
+total_join <- left_join(map, df_total)
+
+obesity_bar <- df_total %>% select(abbr, Data_Value) %>% ggplot(mapping = aes(x = reorder(abbr, Data_Value), y = Data_Value, fill = abbr)) +
+  geom_col() + coord_flip() + ylab('Obese Percentage') + xlab('States') + ggtitle('Obesity Percentage by State') +
+  guides(fill = FALSE)
+
+df_leaflet <- df_total %>% select(abbr, Data_Value, Long, Lat)
+dfLabel <- sprintf("<b>%s</b> <br/> Obesity Rate: %s", df_leaflet$abbr, df_leaflet$Data_Value) %>% lapply(htmltools::HTML)
+
+northeast = c('Maine', 'New Hampshire', 'Vermont','Massachusetts','Rhode Island' , 'Connecticut', 'New York',  'Pennsylvania', 'New Jersey')
+
+midwest = c('Wisconsin','Michigan','Illinois','Indiana','Ohio','North Dakota','South Dakota','Nebraska','Kansas','Minnesota','Iowa','Missouri')
+
+south = c('Delaware','Maryland','District of Columbia','Virginia','West Virginia', 'North Carolina','South Carolina','Georgia','Florida','Kentucky'
+,'Tennessee','Mississippi','Alabama', 'Oklahoma','Texas','Arkansas','Louisiana')
+
+west = c('Idaho','Montana','Wyoming','Nevada','Utah','Colorado', 'Arizona','New Mexico', 'Alaska','Washington','Oregon','California',
+         'Hawaii')
+
+northeast_map = us_map(include = northeast)
+midwest_map = us_map(include = midwest)
+south_map = us_map(include = south)
+west_map = us_map(include = west)
+
+northeast_join = left_join(northeast_map, df_total)
+midwest_join = left_join(midwest_map, df_total)
+south_join = left_join(south_map, df_total)
+west_join = left_join(west_map, df_total)
+
+
+
+north_plot <- northeast_join %>% ggplot(mapping = aes(x = x, y = y, fill = Data_Value, group=group)) + geom_polygon() +
+  theme_map() + coord_equal()  + ggtitle('Obesity in NorthEast')+
+  labs(fill = element_blank()) + theme(plot.title = element_text(hjust = 0.5)) +
+  scale_fill_distiller(palette = 'Set1')
+
+midwest_plot <- midwest_join %>% ggplot(mapping = aes(x = x, y = y, fill = Data_Value, group=group)) + geom_polygon() +
+  theme_map() + coord_equal()  + ggtitle('Obesity in MidWest')+
+  labs(fill = element_blank()) + theme(plot.title = element_text(hjust = 0.5)) +
+  scale_fill_distiller(palette = 'Set1')
+
+south_plot <- south_join %>% ggplot(mapping = aes(x = x, y = y, fill = Data_Value, group=group)) + geom_polygon() +
+  theme_map() + coord_equal()  + ggtitle('Obesity in South')+
+  labs(fill = element_blank()) + theme(plot.title = element_text(hjust = 0.5)) +
+  scale_fill_distiller(palette = 'Set1')
+
+West_plot <- west_join %>% ggplot(mapping = aes(x = x, y = y, fill = Data_Value, group=group)) + geom_polygon() +
+  theme_map() + coord_equal()  + ggtitle('Obesity in West')+
+  labs(fill = element_blank()) + theme(plot.title = element_text(hjust = 0.5)) +
+  scale_fill_distiller(palette = 'Set1')
+
+
+total_join %>% ggplot(mapping = aes(x = x, y = y, fill = Data_Value, group=group)) + geom_polygon() +
+  theme_map() + coord_equal()  +
+  labs(title = 'Obesity Percentage by State', fill = 'Obesity Percentage') + theme(plot.title = element_text(hjust = 0.5)) +
+  scale_fill_distiller(palette = 'Set1')
+
+df_leaflet %>% leaflet(options = leafletOptions(zoomSnap = 0.1)) %>% setView(lng = -99.901813, lat = 41.492537, zoom = 5.5) %>% 
+   addTiles() %>% addMarkers(~Long, ~Lat, label = dfLabel, popup = dfLabel)
+
+grid.arrange(West_plot, midwest_plot, south_plot, north_plot, right= 5)
+
+
+```
+
+# Justification to States with High Obesity
+
+``` {r obesity_vs_income, echo = FALSE}
+# This chunk attempts to justify the results from the previous plot
+# It scrapes the web to get data for median household income in differnet US states in the year 2016
+# It wrangles that data to convert it into a tibble and save that tibble (to avoid multiple request to website)
+# Compares the states with lowest median household income and highest obesity rates
+# Plots obesity rates (in descending order) and median household income (in ascending order) to clearly visualize the similarities
+
+# Q1 (Part-2) How can we explain this association of certain states with high obesity rates?
+
+page <- read_html("https://en.wikipedia.org/wiki/List_of_U.S._states_and_territories_by_income")
+income_vector <-  page %>% html_nodes("td:nth-child(5)") %>% html_text()
+income_vector <- income_vector[1:53]
+income_vector <- income_vector[-21]
+income_vector <- income_vector[-47]
+income_vector <- as.numeric(str_remove_all(income_vector, "[$,]"))
+
+
+state_vector <- page %>% html_nodes("td:nth-child(2)") %>% html_text()
+state_vector <- state_vector[1:53]
+state_vector <- state_vector[-21]
+state_vector <- state_vector[-47]
+state_vector <- str_trim(state_vector)
+state_vector <- state.abb[match(state_vector, state.name)]
+state_vector[1] = "DC"
+
+income_tibble <- tibble(State = state_vector, Median_Household_Income = income_vector)
+
+# write_csv(income_tibble, 'data/median_income.csv')
+
+income_tibble <- read.csv('data/median_income.csv')
+income_bottom_state <- income_tibble %>% arrange(Median_Household_Income) %>% head(10)
+income_bottom_10 <- income_bottom_state$State
+obese_top_state <- df_total %>% arrange(desc(Data_Value)) %>% head(10)
+obese_top_10 <- obese_top_state$abbr
+
+common_state <- income_bottom_10[income_bottom_10 %in% obese_top_10]
+
+income_bar <- income_tibble %>% ggplot(mapping = aes(x = reorder(State, -Median_Household_Income), y = Median_Household_Income, fill = State)) +
+  geom_col() + coord_flip() + ylab('Median HouseHold Income') + xlab('States') + ggtitle('Median Household Income by State') +
+  guides(fill = FALSE)
+
+grid.arrange(obesity_bar, income_bar, nrow=1, ncol=2)
+
+
+```
+
+# Obesity and Education
+
+```{r obesity_education, warnings = FALSE, message=FALSE, echo = FALSE}
+
+# This code chunk filters the Obesity dataset by "Education" Category. 
+# It get the obese percentage by different education demographic
+# It plots the obese percentage by different education demographics in the US states
+
+# Q2)  Is there a relation between obesity and the highest level of education obtained by individuals?
+
+strat_value <- 'Education'
+
+df_edu <- df_wrangle %>% filter(year == 2016, StratificationCategory1 == strat_value) 
+
+df_edu_weight <- df_edu %>% filter(Class == 'Obesity / Weight Status')
+
+df_edu_habits <- df_edu %>% filter(Class == 'Physical Activity')
+
+
+
+# Q1) Obesity in US  for education less than high school
+df_no_ed <- df_edu_weight  %>% na.omit()
+
+
+# df_no_ed_states <- df_no_ed %>% filter(abbr != extra_states)
+df_no_ed_obesity <- df_no_ed %>% filter(Question == 'Percent of adults aged 18 years and older who have obesity')
+
+no_ed_join = left_join(map, df_no_ed_obesity)
+
+
+
+no_ed_join %>% ggplot(mapping = aes(x = x, y = y, fill = Data_Value, group=group)) + geom_polygon() +
+  theme_map() + coord_equal()  + ggtitle('Obese Percentage by Education Groups') +
+  labs(fill = 'Obesity Percentage') + theme(plot.title = element_text(hjust = 0.5)) +
+  scale_fill_distiller(palette = 'Set1') + facet_wrap(~Stratification1)
+
+```
+
+# Obesity and Physical Activities among Education wise Demographics
+
+```{r obesity_education_habit, warnings = FALSE, message=FALSE, echo = FALSE}
+
+# This chunk aims to justify the results from the previous plot
+# It gets the percentage of people who are not involved in any physical activities by different education demographic
+# It plots the percentage of no physical activities by different education demographics in the US states
+
+# Q2 (Part-2)  If so, what are some possible explanations?
+
+df_edu_habits_w <- df_edu_habits %>% na.omit()
+ed_habits_join <- left_join(map, df_edu_habits_w)
+ed_habits_join %>% ggplot(mapping = aes(x = x, y = y, fill = Data_Value, group=group)) + geom_polygon() +
+  theme_map() + coord_equal()  + labs(title = 'Education Impact on Physical Activities')+
+  labs(fill = 'No Exercise Percentage') + theme(plot.title = element_text(hjust = 0.5)) +
+  scale_fill_distiller(palette = 'Set1') + facet_wrap(~Stratification1)
+
+
+```
+
+# Obesity Rate Across Country by Income
+
+```{r obesity-income, echo = FALSE}
+#Question 3: How is the Obesity Rate affected across the US by income ? What trend can we see across the states about Obesity Rate and Income ?
+
+#In this block we wrangle data to get the relationship of Obesity Rate Across US with different Income Range. We look at the US map to find a trend between income range and Obesity Rate. 
+
+#wranlging data
+
+nutrition <- df
+
+nutritionDf2 <- nutrition %>%
+  filter(YearStart == 2016)%>%
+  select(YearStart, LocationAbbr, LocationDesc, GeoLocation, Class, Question, Sample_Size, Data_Value, StratificationCategory1, Stratification1)%>%
+  filter(StratificationCategory1 == "Income")%>%
+  filter(!Stratification1 == "Data not reported")%>%
+  filter(Question == "Percent of adults aged 18 years and older who have obesity")
+
+nutritionDf2 <- nutritionDf2 %>%
+  rename(year = YearStart,
+         abbr = LocationAbbr,
+         state = LocationDesc)
+
+#bar chart for Obesity Rate vs Income Range Across US
+nutritionDf2 %>%
+  filter(abbr == "US")%>%
+  ggplot()+
+  geom_col(mapping = aes(x = Stratification1, y = Data_Value, fill = Stratification1))+
+  labs(title = "Obesity Rate Across US by Income", x= element_blank(), y = "Obesity Rate", fill = "Income")+
+  theme(plot.title = element_text(hjust = 0.5), axis.text.x = element_blank())
+
+usmap <- us_map("states")%>%
+  rename(lat = x,
+         long = y,
+         state = full)
+
+#Country Map showing Obesity Rates Faceted by different Income Range 
+left_join(usmap, nutritionDf2, by = "abbr")%>%
+  ggplot(mapping = aes(x = lat, y = long, fill = Data_Value, group = group))+
+  geom_polygon()+
+  coord_equal()+
+  theme_map()+
+  scale_fill_distiller(palette = "Set1")+
+  labs(title = "Obesity Rate In US by Different Income Range", fill = "Obesity Rate")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  facet_wrap(~Stratification1)
+
+```
+
+# Obesity Rate by Race
+
+```{r obesity-race-1, message= FALSE, warning = FALSE, echo = FALSE}
+
+#Question 4: How has Obesity affected different races/ethnicities across the country? How do factors like Physical Activity contribute to that ?
+
+# In this block we wrangle the obesity data to get the bar charts for obesityVSrace and raceVSphysical activity.
+
+
+#wrangling data
+nutritionDf1 <- nutrition %>%
+  filter(YearStart == 2016)%>%
+  select(YearStart, LocationAbbr, LocationDesc, GeoLocation, Class, Question, Sample_Size, Data_Value, StratificationCategory1, Stratification1)%>%
+  filter(StratificationCategory1 == "Race/Ethnicity")%>%
+  filter(!Stratification1 %in% c("2 or more races", "Other"))
+
+nutritionDf1 <- nutritionDf1 %>%
+  rename(year = YearStart,
+         abbr = LocationAbbr,
+         state = LocationDesc)
+
+#bar chart for race and obesity rate
+nutritionDf1 %>%
+  filter(abbr == "US")%>%
+  filter(Question == "Percent of adults aged 18 years and older who have obesity")%>%
+  ggplot(mapping = aes(x = Stratification1, y = Data_Value,  fill = Stratification1))+
+  geom_bar(stat="identity")+
+  labs(title = "Obesity Rate Across US by Race/Ethnicity", x = element_blank(), y = "Obesity Percentage", fill = "Race/Ethnicity")+
+  theme(plot.title = element_text(hjust = 0.5), axis.text.x = element_blank())
+
+#bar chart for physical activity and race
+nutrition %>%
+  filter(LocationAbbr == "US")%>%
+  filter(YearStart == 2016)%>%
+  filter(Class == "Physical Activity")%>%
+  filter(StratificationCategory1 == "Race/Ethnicity")%>%
+  filter(!Stratification1 %in% c("2 or more races", "Other"))%>%
+  ggplot(mapping = aes(x = Stratification1, y = Data_Value, fill = Stratification1))+
+  geom_bar(stat = "identity")+
+  labs(title = "Percent Engaging in No Leisure-Time Physical Activity", x = element_blank(), y = "Percent", fill = "Race/Ethnicity")+
+  theme(plot.title = element_text(hjust = 0.5), axis.text.x = element_blank())
+
+```
+
+# Obesity Rate by Age Group
+
+```{r obesity-age group, message=FALSE, warning=FALSE, echo = FALSE}
+# This code chunk grabs the data related to obesity among different age-groups from csv file and shows obesity rate in different age groups in bar charts. It also shows a correlation with the physical activity and obesity among different age groups
+
+# Q5) How is obesity spread out among different age groups? Why might this be the case?
+
+
+grouping <- 'Age (years)'
+
+obesity_data<- df
+obesity_data_age<-obesity_data%>%
+  filter(StratificationCategory1== grouping)
+
+
+obesity_data_age<-obesity_data_age%>%
+  filter(Class=="Obesity / Weight Status")
+
+obesity_data_age1<-obesity_data_age%>%
+  select(YearStart, LocationAbbr,Class,Question,Data_Value,'Age(years)',GeoLocation,StratificationCategory1,Stratification1,LocationID,Sample_Size)
+
+obesity_data_age1<-obesity_data_age1%>%
+  filter(Question=="Percent of adults aged 18 years and older who have obesity")%>%
+  arrange(LocationAbbr)
+
+obesity_data_age_percent<-obesity_data_age1%>%
+  rename(state=LocationAbbr)%>%
+  filter(state!="US"& state!="PR", state!="VI"& state!="GU")
+
+obesity_data_age_percent_2016<-obesity_data_age_percent%>%
+  filter(YearStart==2016)
+
+#Q5(Part1) Obesity rate by Age Group in 2016
+obesity_data_age_percent_totalagegroup<-obesity_data_age_percent_2016%>%
+  group_by(`Age(years)`)%>%
+  summarize(meanValue=mean(Data_Value))
+
+obesity_data_age_percent_totalagegroup%>%
+  ggplot(mapping=aes(x=`Age(years)`,y=meanValue,fill=`Age(years)`))+
+  geom_bar(stat='identity')+
+  theme(axis.text.x=element_blank(),plot.title = element_text(hjust = 0.5))+
+  labs(title="Obesity Rate by Age Group in 2016",y="Obesity Rate")
+
+
+#Q5(Part2) Obesity Rate by Age group and State in 2016
+obesity_data_age_percent_2016%>%
+  group_by(`Age(years)`,state)%>%
+  ggplot(mapping=aes(x=`Age(years)`,y=Data_Value,fill=`Age(years)`))+
+  geom_bar(stat='identity')+
+  facet_wrap(~state)+
+  theme(axis.text.x=element_blank(),plot.title = element_text(hjust = 0.5))+
+  labs(title="Obesity Rate by Age Group in every State in 2016",y="Obesity Rate")
+  
+
+
+
+#Q5(Part3) Obesity Rate by Age and Year
+
+obesity_data_age_allYear1<-obesity_data_age_percent%>%
+  group_by(`Age(years)`,YearStart)%>%
+  summarize(meanValue=mean(Data_Value))
+
+obesity_data_age_allYear1%>%
+  ggplot(mapping=aes(x=`Age(years)`,y=meanValue,fill=`Age(years)`))+
+  geom_bar(stat='identity')+
+  theme(axis.text.x=element_blank(),plot.title = element_text(hjust = 0.5))+
+  labs(title="Obesity Rate by Age Group",y="Obesity Rate")+
+  facet_wrap(~YearStart)
+
+
+
+#Q5 (Part4) Physical Activity by Age Group in all States
+df_edu <- df_wrangle %>% filter(year == 2016, StratificationCategory1 == grouping) 
+
+df_edu_weight <- df_edu %>% filter(Class == 'Obesity / Weight Status')
+
+df_edu_habits <- df_edu %>% filter(Class == 'Physical Activity')
+
+df_edu_habits_w <- df_edu_habits %>% na.omit()
+ed_habits_join <- left_join(map, df_edu_habits_w)
+ed_habits_join %>% 
+  ggplot(mapping = aes(x = x, y = y, fill = Data_Value, group=group)) +
+  geom_polygon() +
+  theme_map() +
+  coord_equal()  + 
+  labs(title = 'Physical Activity by Age Group and State')+
+  labs(fill = 'No Exercise Percentage') + theme(plot.title = element_text(hjust = 0.5)) +
+  scale_fill_distiller(palette = 'Set1') + facet_wrap(~Stratification1)
+
+```
+
+
+# Correlation of Obesity with Median Household Income of Different Races
+
+```{r obesity-race,message=FALSE, warning=FALSE, echo = FALSE}
+
+
+#This code chunk grabs the data related to obesity among different race from the csv file and shows obesity rate in different races in bar charts taking different factors like State, year into account.
+
+#And then it takes data from another csv file related to median household income of different races. And then we derive a conclusion about a negative correlation between them.
+
+# Q6) How does obesity impact people of different races with variant income? 
+#Why does obesity impact people of different races having different incomes 
+
+
+grouping <- 'Race/Ethnicity'
+
+
+obesity_data_race<-obesity_data%>%
+  filter(StratificationCategory1== grouping)
+
+obesity_data_race<-obesity_data_race%>%
+  filter(Class=="Obesity / Weight Status")
+
+obesity_data_race1<-obesity_data_race%>%
+  select(YearStart, LocationAbbr,Class,Question,Data_Value,`Race/Ethnicity`,GeoLocation,StratificationCategory1,Stratification1,LocationID,Sample_Size)
+
+obesity_data_race_filter<-obesity_data_race1%>%
+  na.omit()%>%
+  filter(`Race/Ethnicity`!="2 or more races"& `Race/Ethnicity`!="Other")%>%
+  rename(state=LocationAbbr)%>%
+  arrange(state)
+
+obesity_data_race_filter<-obesity_data_race_filter%>%
+  filter(state!="US"& state!="PR", state!="VI"& state!="GU")%>%
+  filter(Question=="Percent of adults aged 18 years and older who have obesity")
+
+
+obesity_data_race_filter_2016<-obesity_data_race_filter%>%
+  filter(YearStart==2016)
+
+
+#Q6(Part1) Obesity by Race and State in 2016
+obesity_data_race_filter_2016%>%
+  group_by(`Race/Ethnicity`,state)%>%
+  ggplot(mapping=aes(x=`Race/Ethnicity`,y=Data_Value,fill=`Race/Ethnicity`))+
+  geom_bar(stat='identity')+
+  facet_wrap(~state)+
+  theme(axis.text.x=element_blank(),plot.title = element_text(hjust = 0.5))+
+  labs(title="Obesity by Race among States in 2016",y="Obesity Percent")
+
+
+
+#Q6(Part2) Obesity by Race and Year
+obesity_data_race_average<-obesity_data_race_filter%>%
+  group_by(`Race/Ethnicity`,YearStart)%>%
+  summarize(meanValue=mean(Data_Value))
+
+obesity_data_race_average%>%
+  ggplot(mapping=aes(x=`Race/Ethnicity`,y=meanValue,fill=`Race/Ethnicity`))+
+  geom_bar(stat='identity')+
+  facet_wrap(~YearStart)+
+  theme(axis.text.x=element_blank(),plot.title = element_text(hjust = 0.5))+
+  labs(title="Obesity by Race and Year",y="Obesity Percent")
+
+
+
+#Q6(Part3) Bar chart to visualize the median household income of different Race/Ethnicity
+data<-read_csv("data/median_household_income.csv")
+
+#wrangling the dataset to get the average median household income of different race in different years
+income_race<-data%>%
+  select(-api_est,-api_se)%>%
+  filter(year>=2011 & year<=2016)%>%
+  select(name,year,total_est,aian_est,asian_est,black_est,hisp_est,nhopi_est,white_est)%>%
+  rename("state"="name")%>%
+  rename("Total Pop Income"="total_est")%>%
+  rename("American_Indian and Alaska_Native"="aian_est")%>%
+  rename("Asian"="asian_est")%>%
+  rename("Black"="black_est")%>%
+  rename("Hispanic"="hisp_est")%>%
+  rename("White"="white_est")%>%
+  rename("Native Hawaiian and Pacific Islander"="nhopi_est")%>%
+  select(-"Total Pop Income")%>%
+  pivot_longer("American_Indian and Alaska_Native":White,names_to="Race",values_to="Median Household Income")%>%
+  na.omit() %>% 
+  group_by(Race,year) %>% 
+  summarize(average_median_income=mean(`Median Household Income`))
+  
+
+#Bar chart that shows the Median income of different races in different Year
+income_race%>%
+  group_by(Race)%>%
+  ggplot(mapping=aes(x=Race,y=average_median_income,fill=Race))+
+  geom_bar(stat='identity')+
+  facet_wrap(~year)+
+  theme(axis.text.x=element_blank(),plot.title = element_text(hjust = 0.5))+
+  labs(title="Average Household Median Income by Race and Year",y="Average Median Income")
+
+```
+
